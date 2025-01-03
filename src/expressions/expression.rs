@@ -127,6 +127,10 @@ pub struct FunctionParameter {
     pub default_value: Option<Box<Expression>>,
 }
 
+pub struct FunctionArgument {
+    pub expr: Expression,
+}
+
 pub enum Expression {
     // ID, RHS
     Assignment(Box<Expression>, Box<Expression>),
@@ -152,6 +156,7 @@ pub enum Expression {
         Vec<FunctionParameter>,
         Option<Scope>,
     ),
+    FunctionCall(String, Vec<FunctionArgument>),
     // ID
     IdentifierExpression(String),
     // Int Value
@@ -335,6 +340,19 @@ impl Expression {
                     name,
                     strings.join(","),
                     body,
+                );
+            }
+            Self::FunctionCall(id, arguments) => {
+                let mut strings = Vec::new();
+
+                for a in arguments.iter() {
+                    strings.push(a.expr.to_json());
+                }
+
+                return format!(
+                    "{{\"type\": \"function_call\", \"id\": \"{}\", \"arguments\": [{}]}}",
+                    id,
+                    strings.join(","),
                 );
             }
             Self::Module(name, body) => {

@@ -5,7 +5,7 @@ use std::{
 
 use crate::expressions::expression::{
     AccessModifiers, ArithmeticOperator, BooleanOperator, ComparisonOperator, DtoFieldDefinition,
-    EqualityOperator, Expression, FunctionParameter, Scope, ScopeLevels, Types,
+    EqualityOperator, Expression, FunctionArgument, FunctionParameter, Scope, ScopeLevels, Types,
 };
 
 use super::{
@@ -548,6 +548,41 @@ impl Parser {
 
         self.lexer.put_back_token(token);
         return Ok(lhs);
+    }
+
+    fn parse_function_call(&mut self) -> Result<Expression, ParseError> {
+        let id = self.lexer.next_token()?;
+
+        match id {
+            Tokens::TIdentifier(id) => {
+                if self.lexer.peek_token()? == Tokens::TLparen {
+                    let arguments: Vec<FunctionArgument> = Vec::new();
+                    self.parse_function_arguments(&mut arguments)?;
+                    return;
+                } else {
+                    self.parse_primary_expression();
+                }
+            }
+            _ => self.parse_primary_expression(),
+        }
+    }
+
+    fn parse_function_arguments(
+        &mut self,
+        arguments: &mut Vec<FunctionArgument>,
+    ) -> Result<(), ParseError> {
+        // consume the '('
+        self.lexer.next_token()?;
+        let mut token = self.lexer.next_token()?;
+
+        while token != Tokens::TRparen {
+            let arg = FunctionArgument { expr: self.parse_expression()? };
+            arguments.push(arg);
+
+            token = self.lexer.next_token();
+        }
+
+        Ok(())
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression, ParseError> {
