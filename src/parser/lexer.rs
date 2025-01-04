@@ -291,6 +291,7 @@ impl Lexer {
                     token if token == "in" => Tokens::TIn,
                     token if token == "int" => Tokens::TInt,
                     token if token == "map" => Tokens::TMap,
+                    token if token == "mod" => Tokens::TMod,
                     token if token == "not" => Tokens::TNot,
                     token if token == "or" => Tokens::TOr,
                     token if token == "pub" => Tokens::TPub,
