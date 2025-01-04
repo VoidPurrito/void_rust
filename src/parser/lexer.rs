@@ -314,7 +314,6 @@ impl Lexer {
                 let maybe_decimal = self.get_next_char()?;
 
                 if maybe_decimal == '.' {
-
                     token.push_str(&String::from(maybe_decimal));
                     self.read_integer(&mut token)?;
 

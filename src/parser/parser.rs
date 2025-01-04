@@ -481,7 +481,9 @@ impl Parser {
     }
 
     fn parse_return(&mut self) -> Result<Expression, ParseError> {
-        Ok(Expression::ReturnExpression(Box::new(self.parse_expression(true)?)))
+        Ok(Expression::ReturnExpression(Box::new(
+            self.parse_expression(true)?,
+        )))
     }
 
     fn parse_expression(&mut self, requires_delimiter: bool) -> Result<Expression, ParseError> {
