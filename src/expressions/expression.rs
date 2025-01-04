@@ -171,8 +171,8 @@ impl Display for BooleanOperator {
 impl Display for EqualityOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Equals => write!(f, "equals"),
-            Self::NotEqualsTo => write!(f, "not_equals_to"),
+            Self::Equals => write!(f, "=="),
+            Self::NotEqualsTo => write!(f, "!="),
         }
     }
 }
@@ -180,10 +180,10 @@ impl Display for EqualityOperator {
 impl Display for ComparisonOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LessThan => write!(f, "less_than"),
-            Self::LessThanOrEqual => write!(f, "less_than_or_equals"),
-            Self::GreaterThan => write!(f, "greater_than"),
-            Self::GreaterThanOrEqual => write!(f, "greater_than_or_equals"),
+            Self::LessThan => write!(f, "<"),
+            Self::LessThanOrEqual => write!(f, "<="),
+            Self::GreaterThan => write!(f, ">"),
+            Self::GreaterThanOrEqual => write!(f, ">="),
         }
     }
 }
@@ -191,10 +191,10 @@ impl Display for ComparisonOperator {
 impl Display for ArithmeticOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Plus => write!(f, "plus"),
-            Self::Minus => write!(f, "minus"),
-            Self::Multiply => write!(f, "multiple"),
-            Self::Divide => write!(f, "divide"),
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+            Self::Multiply => write!(f, "*"),
+            Self::Divide => write!(f, "/"),
             Self::Mod => write!(f, "mod"),
         }
     }
