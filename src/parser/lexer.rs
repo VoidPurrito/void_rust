@@ -13,8 +13,10 @@ pub enum Tokens {
     TAssign,
     TAttach,
     TBool,
+    TBreak,
     TColon,
     TComma,
+    TContinue,
     TDiv,
     TDto,
     TDot,
@@ -68,8 +70,10 @@ impl Display for Tokens {
             Self::TAssign => write!(f, "assign"),
             Self::TAttach => write!(f, "attach"),
             Self::TBool => write!(f, "bool"),
+            Self::TBreak => write!(f, "break"),
             Self::TColon => write!(f, "colon"),
             Self::TComma => write!(f, "comma"),
+            Self::TContinue => write!(f, "continue"),
             Self::TDiv => write!(f, "div"),
             Self::TDto => write!(f, "dto"),
             Self::TDot => write!(f, "."),
@@ -147,8 +151,6 @@ impl Lexer {
         }
 
         let mut token = String::new();
-        let mut read_buffer: [u8; 1] = [0];
-
         let ch = self.get_next_char()?;
 
         match ch {
@@ -165,7 +167,17 @@ impl Lexer {
             '+' => return Ok(Tokens::TPlus),
             '-' => return Ok(Tokens::TMinus),
             '*' => return Ok(Tokens::TMult),
-            '/' => return Ok(Tokens::TDiv),
+            '/' => {
+                let next_ch = self.get_next_char()?;
+
+                if next_ch == '/' {
+                    self.get_chars_until(b'\n')?;
+                    self.put_back_char()?;
+                    return self.next_token();
+                } else {
+                    return Ok(Tokens::TDiv);
+                }
+            }
             '%' => return Ok(Tokens::TMod),
             '=' | '<' | '>' => {
                 let next_ch = self.get_next_char()?;
@@ -268,6 +280,8 @@ impl Lexer {
                     token if token == "and" => Tokens::TAnd,
                     token if token == "attach" => Tokens::TAttach,
                     token if token == "bool" => Tokens::TBool,
+                    token if token == "break" => Tokens::TBreak,
+                    token if token == "continue" => Tokens::TContinue,
                     token if token == "dto" => Tokens::TDto,
                     token if token == "else" => Tokens::TElse,
                     token if token == "false" => Tokens::TFalse,
@@ -294,13 +308,14 @@ impl Lexer {
                 return Ok(matched_token);
             }
             ch if ch.is_ascii_digit() => {
-                token.push_str(&String::from(ch));
-
+                self.put_back_char()?;
                 self.read_integer(&mut token)?;
-                self.get_next_char()?;
 
-                if (read_buffer[0] as char) == '.' {
-                    token.push_str(&String::from(read_buffer[0] as char));
+                let maybe_decimal = self.get_next_char()?;
+
+                if maybe_decimal == '.' {
+
+                    token.push_str(&String::from(maybe_decimal));
                     self.read_integer(&mut token)?;
 
                     let real_const = match token.parse::<f64>() {
@@ -315,6 +330,8 @@ impl Lexer {
                     return Ok(Tokens::TRealValue(real_const));
                 }
 
+                self.put_back_char()?;
+
                 let int_const = match token.parse::<i64>() {
                     Ok(val) => val,
                     Err(err) => {
@@ -327,11 +344,11 @@ impl Lexer {
                 return Ok(Tokens::TIntegerValue(int_const));
             }
             ch if ch.to_string() == "." => {
-                self.get_next_char()?;
+                let next_ch = self.get_next_char()?;
 
-                if (read_buffer[0] as char).is_ascii_digit() {
+                if next_ch.is_ascii_digit() {
                     token.push_str(&String::from(ch));
-                    token.push_str(&String::from(read_buffer[0] as char));
+                    token.push_str(&String::from(next_ch));
 
                     self.read_integer(&mut token)?;
 
@@ -426,36 +443,18 @@ impl Lexer {
     }
 
     fn read_integer(&mut self, token: &mut String) -> Result<(), ParseError> {
-        let mut read_buffer: [u8; 1] = [0];
-
         loop {
-            match self.buffer.read(&mut read_buffer) {
-                Ok(count) => {
-                    if count < 1 {
-                        break;
-                    }
+            let ch = self.get_next_char()?;
 
-                    if (read_buffer[0] as char).is_ascii_digit() {
-                        token.push_str(&String::from(read_buffer[0] as char));
-                    } else {
-                        self.put_back_char()?;
-                        break;
-                    }
-                }
-                Err(_) => {
-                    return Err(ParseError {
-                        message: String::from("failed to read file"),
-                    })
-                }
-            };
+            if ch.is_ascii_digit() {
+                token.push_str(&String::from(ch));
+            } else {
+                self.put_back_char()?;
+                break;
+            }
         }
 
-        match self.buffer.seek_relative(-1) {
-            Ok(()) => Ok(()),
-            Err(err) => Err(ParseError {
-                message: err.to_string(),
-            }),
-        }
+        Ok(())
     }
 
     pub fn is_typename(token: Tokens) -> bool {

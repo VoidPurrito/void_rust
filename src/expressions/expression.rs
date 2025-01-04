@@ -143,15 +143,17 @@ pub enum Expression {
     ForLoop(Box<Expression>, Box<Expression>, Scope),
     // EXPR
     ReturnExpression(Box<Expression>),
-    // Nop
+    Break,
+    Continue,
     NOP,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScopeLevels {
+pub enum ScopeType {
     Block,
     Function,
     Global,
+    Loop,
 }
 
 impl Scope {
@@ -365,6 +367,8 @@ impl Expression {
                 "{{\"type\": \"return\", \"expr\": {}}}",
                 expression.to_json()
             ),
+            Self::Break => format!("{{\"type\": \"break\"}}"),
+            Self::Continue => format!("{{\"type\": \"continue\"}}"),
             Self::NOP => format!("{{\"type\": \"nop\"}}"),
         }
     }

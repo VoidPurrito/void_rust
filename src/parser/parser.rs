@@ -6,7 +6,7 @@ use std::{
 
 use crate::expressions::expression::{
     AccessModifiers, ArithmeticOperator, BooleanOperator, ComparisonOperator, DtoFieldDefinition,
-    EqualityOperator, Expression, FunctionArgument, FunctionParameter, Scope, ScopeLevels, Types,
+    EqualityOperator, Expression, FunctionArgument, FunctionParameter, Scope, ScopeType, Types,
 };
 
 use super::{
@@ -17,7 +17,7 @@ use super::{
 pub struct Parser {
     path: String,
     lexer: Lexer,
-    scope_list: VecDeque<ScopeLevels>,
+    scope_list: VecDeque<ScopeType>,
 }
 
 impl Parser {
@@ -25,7 +25,7 @@ impl Parser {
         let buffer = Parser::open_file(&path)?;
         let lexer = Lexer::new(buffer);
         let mut scope_list = VecDeque::new();
-        scope_list.push_front(ScopeLevels::Global);
+        scope_list.push_front(ScopeType::Global);
 
         Ok(Self {
             path,
@@ -50,15 +50,15 @@ impl Parser {
     }
 
     pub fn parse_file(&mut self) -> Result<Expression, ParseError> {
-        let scope = self.parse_scope(ScopeLevels::Global)?;
+        let scope = self.parse_scope(ScopeType::Global)?;
         return Ok(Expression::Module(self.path.clone(), scope));
     }
 
-    pub fn parse_scope(&mut self, scope_level: ScopeLevels) -> Result<Scope, ParseError> {
+    pub fn parse_scope(&mut self, scope_level: ScopeType) -> Result<Scope, ParseError> {
         let mut scope = Scope { body: Vec::new() };
         let mut token = self.lexer.next_token()?;
 
-        if scope_level == ScopeLevels::Block || scope_level == ScopeLevels::Function {
+        if scope_level != ScopeType::Global {
             if token != Tokens::TLbrace {
                 return Err(self.parse_error(format!("unexpected token {}, expected {{", token)));
             }
@@ -68,10 +68,8 @@ impl Parser {
             self.lexer.put_back_token(token);
         }
 
-
         loop {
             token = self.lexer.next_token()?;
-
             if token == Tokens::TRbrace {
                 self.scope_list.pop_front();
                 break;
@@ -79,16 +77,12 @@ impl Parser {
 
             if token == Tokens::TEof {
                 match scope_level {
-                    ScopeLevels::Block | ScopeLevels::Function => {
-                        return Err(self.parse_error(format!("unexpected end-of-file")));
-                    }
-                    ScopeLevels::Global => {
-                        break;
-                    }
+                    ScopeType::Global => break,
+                    _ => return Err(self.parse_error(format!("unexpected end-of-file"))),
                 }
             }
 
-            if scope_level == ScopeLevels::Global {
+            if scope_level == ScopeType::Global {
                 if token == Tokens::TDto {
                     let dto = self.parse_dto()?;
                     scope.body.push(dto);
@@ -105,7 +99,7 @@ impl Parser {
             let has_function_scope = self
                 .scope_list
                 .iter()
-                .position(|&s| s == ScopeLevels::Function)
+                .position(|&s| s == ScopeType::Function)
                 != None;
 
             if token == Tokens::TReturn {
@@ -118,6 +112,30 @@ impl Parser {
                 return Err(
                     self.parse_error(format!("return is not allowed outside of a function"))
                 );
+            }
+
+            let has_loop_scope = self.scope_list.iter().position(|&s| s == ScopeType::Loop) != None;
+
+            if token == Tokens::TBreak {
+                if has_loop_scope {
+                    scope.body.push(self.parse_break()?);
+                    continue;
+                }
+
+                return Err(self.parse_error(format!(
+                    "break is only allowed within a while or for loop body"
+                )));
+            }
+
+            if token == Tokens::TContinue {
+                if has_loop_scope {
+                    scope.body.push(self.parse_continue()?);
+                    continue;
+                }
+
+                return Err(self.parse_error(format!(
+                    "break is only allowed within a while or for loop body"
+                )));
             }
 
             if token == Tokens::TFn {
@@ -163,18 +181,38 @@ impl Parser {
                 if let Some(()) = expr {
                     continue;
                 }
+            } else {
+                self.lexer.put_back_token(token);
             }
 
-            scope.body.push(self.parse_expression()?);
-            token = self.lexer.next_token()?;
-
-            if token != Tokens::TSemi {
-                return Err(self.parse_error(format!("unexpected token {}, expected ;", token)));
-            }
+            scope.body.push(self.parse_expression(true)?);
         }
         return Ok(scope);
     }
 
+    fn parse_break(&mut self) -> Result<Expression, ParseError> {
+        let token = self.lexer.next_token()?;
+
+        if token == Tokens::TSemi {
+            return Ok(Expression::Break);
+        }
+
+        return Err(ParseError {
+            message: format!("unexpected token {}, expected ';'", token),
+        });
+    }
+
+    fn parse_continue(&mut self) -> Result<Expression, ParseError> {
+        let token = self.lexer.next_token()?;
+
+        if token == Tokens::TSemi {
+            return Ok(Expression::Continue);
+        }
+
+        return Err(ParseError {
+            message: format!("unexpected token {}, expected ';'", token),
+        });
+    }
     fn parse_dto(&mut self) -> Result<Expression, ParseError> {
         let mut token = self.lexer.next_token()?;
 
@@ -269,7 +307,7 @@ impl Parser {
                             Tokens::TSemi => None,
                             Tokens::TLbrace => {
                                 self.lexer.put_back_token(token);
-                                Some(self.parse_scope(ScopeLevels::Block)?)
+                                Some(self.parse_scope(ScopeType::Block)?)
                             }
                             _ => {
                                 return Err(self.parse_error(format!(
@@ -279,7 +317,7 @@ impl Parser {
                             }
                         }
                     }
-                    false => Some(self.parse_scope(ScopeLevels::Function)?),
+                    false => Some(self.parse_scope(ScopeType::Function)?),
                 };
 
                 return Ok(Box::new(Expression::FunctionDefinition(
@@ -373,7 +411,7 @@ impl Parser {
             self.lexer.put_back_token(token);
         }
 
-        let maybe_iterator_var_name = self.parse_expression()?;
+        let maybe_iterator_var_name = self.parse_expression(false)?;
         let iterator_var_name = match maybe_iterator_var_name {
             Expression::IdentifierExpression(id) => Expression::IdentifierExpression(id),
             _ => return Err(self.parse_error(format!("expected ientifier"))),
@@ -386,7 +424,7 @@ impl Parser {
             _ => return Err(self.parse_error(format!("expected token {}, expected 'in'", token))),
         }
 
-        let expr = self.parse_expression()?;
+        let expr = self.parse_expression(false)?;
 
         token = self.lexer.next_token()?;
 
@@ -404,7 +442,7 @@ impl Parser {
             self.lexer.put_back_token(token);
         }
 
-        let body = self.parse_scope(ScopeLevels::Block)?;
+        let body = self.parse_scope(ScopeType::Loop)?;
 
         return Ok(Expression::ForLoop(
             Box::new(iterator_var_name),
@@ -414,8 +452,8 @@ impl Parser {
     }
 
     fn parse_while(&mut self) -> Result<Expression, ParseError> {
-        let guard = self.parse_expression()?;
-        let body = self.parse_scope(ScopeLevels::Block)?;
+        let guard = self.parse_expression(false)?;
+        let body = self.parse_scope(ScopeType::Loop)?;
         return Ok(Expression::WhileLoop(Box::new(guard), body));
     }
 
@@ -426,35 +464,11 @@ impl Parser {
         let maybe_id = self.lexer.next_token()?;
         let id = self.parse_identifier(maybe_id)?;
 
-        let mut token = self.lexer.next_token()?;
+        let token = self.lexer.next_token()?;
 
         let rhs = match token {
             Tokens::TSemi => None,
-            Tokens::TAssign => {
-                let rhs = self.parse_expression()?;
-                //println!("decl rhs: {}", rhs.to_json());
-
-                match rhs {
-                    Expression::NOP => {
-                        return Err(
-                            self.parse_error(format!("unexpected token ;, expected expression"))
-                        );
-                    }
-                    _ => {
-                        token = self.lexer.next_token()?;
-
-                        match token {
-                            Tokens::TSemi => Some(Box::new(rhs)),
-                            _ => {
-                                return Err(self.parse_error(format!(
-                                    "unexpected token {}, expected ;",
-                                    token
-                                )));
-                            }
-                        }
-                    }
-                }
-            }
+            Tokens::TAssign => Some(Box::new(self.parse_expression(true)?)),
             _ => {
                 return Err(self.parse_error(format!(
                     "unexpected token {}, expected ; or expression",
@@ -467,25 +481,24 @@ impl Parser {
     }
 
     fn parse_return(&mut self) -> Result<Expression, ParseError> {
-        let return_expr = self.parse_expression()?;
-
-        let token = self.lexer.next_token()?;
-
-        if token == Tokens::TSemi {
-            return Ok(Expression::ReturnExpression(Box::new(return_expr)));
-        }
-
-        return Err(self.parse_error(format!("unexpected token {}, expected ;", token)));
+        Ok(Expression::ReturnExpression(Box::new(self.parse_expression(true)?)))
     }
 
-    fn parse_expression(&mut self) -> Result<Expression, ParseError> {
-        let token = self.lexer.peek_token()?;
+    fn parse_expression(&mut self, requires_delimiter: bool) -> Result<Expression, ParseError> {
+        let expr = self.parse_assignment_expression()?;
+        let token = self.lexer.next_token()?;
 
-        if token == Tokens::TSemi {
-            return Ok(Expression::NOP);
+        if (requires_delimiter && token != Tokens::TSemi)
+            || (!requires_delimiter && token == Tokens::TSemi)
+        {
+            return Err(self.parse_error(format!("unexpected token {}, expected ';'", token)));
         }
 
-        return self.parse_assignment_expression();
+        if !requires_delimiter {
+            self.lexer.put_back_token(token);
+        }
+
+        return Ok(expr);
     }
 
     fn parse_assignment_expression(&mut self) -> Result<Expression, ParseError> {
@@ -672,7 +685,7 @@ impl Parser {
             self.lexer.put_back_token(token);
 
             let arg = FunctionArgument {
-                expr: self.parse_expression()?,
+                expr: self.parse_expression(false)?,
             };
             arguments.push(arg);
 
@@ -702,7 +715,7 @@ impl Parser {
 
         match token {
             Tokens::TLparen => {
-                let expr = self.parse_expression()?;
+                let expr = self.parse_expression(false)?;
                 token = self.lexer.next_token()?;
 
                 if token != Tokens::TRparen {

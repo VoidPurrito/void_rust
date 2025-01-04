@@ -9,13 +9,11 @@ fn main() {
         Err(err) => panic!("error: error parseing file: {}", err),
     };
         
-    let module = match parser.parse_file() {
-        Ok(module) => module,
+    match parser.parse_file() {
+        Ok(module) => println!("{}", module.to_json()),
         Err(err) => {
-            println!("{}", err.message);
-            std::process::exit(-1);
+            eprintln!("{}", err.message);
+            std::process::exit(1);
         }
     };
-
-    println!("{}", module.to_json());
 }
