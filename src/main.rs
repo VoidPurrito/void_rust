@@ -5,7 +5,7 @@ mod parser;
 mod runtime;
 
 fn main() {
-    let mut parser = match Parser::new(String::from("./test.mn")) {
+    let mut parser = match Parser::new(String::from("./test.v")) {
         Ok(parser) => parser,
         Err(err) => panic!("error: error parseing file: {}", err),
     };
