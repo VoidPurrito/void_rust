@@ -156,6 +156,12 @@ impl Parser {
                 continue;
             }
 
+            if token == Tokens::TIf {
+                let if_expr = self.parse_if()?;
+                scope.body.push(if_expr);
+                continue;
+            }
+
             if Lexer::is_typename(token.clone()) {
                 let expr = match token.clone() {
                     Tokens::TIdentifier(_) => {
@@ -455,6 +461,34 @@ impl Parser {
         let guard = self.parse_expression(false)?;
         let body = self.parse_scope(ScopeType::Loop)?;
         return Ok(Expression::WhileLoop(Box::new(guard), body));
+    }
+
+    fn parse_if(&mut self) -> Result<Expression, ParseError> {
+        let guard = Some(Box::new(self.parse_expression(false)?));
+        let body = self.parse_scope(ScopeType::Block)?;
+
+        let mut token = self.lexer.next_token()?;
+
+        if token == Tokens::TElse {
+            token = self.lexer.next_token()?;
+
+            if token == Tokens::TIf {
+                let else_if_expr = Box::new(self.parse_if()?);
+                return Ok(Expression::If(guard, body, Some(else_if_expr)));
+            }
+
+            self.lexer.put_back_token(token);
+            let else_expr = Box::new(Expression::If(
+                None,
+                self.parse_scope(ScopeType::Block)?,
+                None,
+            ));
+
+            return Ok(Expression::If(guard, body, Some(else_expr)));
+        }
+
+        self.lexer.put_back_token(token);
+        return Ok(Expression::If(guard, body, None));
     }
 
     fn parse_declaration(&mut self) -> Result<Expression, ParseError> {

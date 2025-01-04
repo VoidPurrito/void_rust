@@ -131,7 +131,9 @@ pub enum Expression {
     WhileLoop(Box<Expression>, Scope),
     // Iterator Variable Name, Expression
     ForLoop(Box<Expression>, Box<Expression>, Scope),
-    // EXPR
+    // Guard, Body, Else If
+    If(Option<Box<Expression>>, Scope, Option<Box<Expression>>),
+    // Return Value Expression
     ReturnExpression(Box<Expression>),
     Break,
     Continue,
@@ -352,6 +354,29 @@ impl Expression {
                 iterator_exp.to_json(),
                 body.to_json()
             ),
+            Self::If(guard, body, next) => {
+                let _type: &str;
+
+                let guard_json = match guard {
+                    Some(e) => {
+                        _type = "if";
+                        e.to_json()
+                    }
+                    None => {
+                        _type = "else";
+                        String::from("null")
+                    }
+                };
+
+                let body_json = body.to_json();
+
+                let next_json = match next {
+                    Some(e) => e.to_json(),
+                    None => String::from("null"),
+                };
+
+                format!("{{\"type\": \"{}\", \"guard\": {}, \"body\": {}, \"next\": {}}}", _type, guard_json, body_json, next_json)
+            }
             Self::ReturnExpression(expression) => format!(
                 "{{\"type\": \"return\", \"expr\": {}}}",
                 expression.to_json()
