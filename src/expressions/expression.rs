@@ -5,7 +5,7 @@ pub enum Types {
     BoolType,
     DynamicType,
     IntType,
-    ListType,
+    // ListType,
     MapType,
     RealType,
     StringType,
@@ -15,14 +15,14 @@ pub enum Types {
 #[derive(Debug)]
 pub enum AccessModifiers {
     Public,
-    Private,
+    // Private,
 }
 
 impl Display for AccessModifiers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Public => write!(f, "public"),
-            Self::Private => write!(f, "private"),
+            // Self::Private => write!(f, "private"),
         }
     }
 }
@@ -33,23 +33,13 @@ impl Display for Types {
             Self::BoolType => write!(f, "Booltype"),
             Self::DynamicType => write!(f, "DynamicType"),
             Self::IntType => write!(f, "IntType"),
-            Self::ListType => write!(f, "ListType"),
+            // Self::ListType => write!(f, "ListType"),
             Self::MapType => write!(f, "MapType"),
             Self::RealType => write!(f, "RealType"),
             Self::StringType => write!(f, "StringType"),
             Self::CustomType(id) => write!(f, "{id}"),
         }
     }
-}
-
-pub trait IExpression {
-    fn exec(&self);
-    fn to_json(&self) -> String;
-}
-
-pub struct InitializerList {
-    pub field_count: u32,
-    pub values: Vec<Box<dyn IExpression>>,
 }
 
 pub struct Scope {
@@ -92,7 +82,7 @@ pub struct DtoFieldDefinition {
 pub struct FunctionParameter {
     pub typename: Types,
     pub name: String,
-    pub default_value: Option<Box<Expression>>,
+    // pub default_value: Option<Box<Expression>>,
 }
 
 pub struct FunctionArgument {
@@ -145,7 +135,6 @@ pub enum Expression {
     ReturnExpression(Box<Expression>),
     Break,
     Continue,
-    NOP,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,7 +358,6 @@ impl Expression {
             ),
             Self::Break => format!("{{\"type\": \"break\"}}"),
             Self::Continue => format!("{{\"type\": \"continue\"}}"),
-            Self::NOP => format!("{{\"type\": \"nop\"}}"),
         }
     }
 }

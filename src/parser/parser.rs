@@ -370,7 +370,7 @@ impl Parser {
         return Ok(FunctionParameter {
             typename: param_type,
             name,
-            default_value: None,
+            // default_value: None,
         });
     }
 
