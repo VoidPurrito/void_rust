@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{self, BufReader},
 };
@@ -16,14 +17,31 @@ use super::{
 pub struct Parser {
     path: String,
     lexer: Lexer,
+    scope_list: VecDeque<ScopeLevels>,
 }
 
 impl Parser {
     pub fn new(path: String) -> io::Result<Self> {
         let buffer = Parser::open_file(&path)?;
         let lexer = Lexer::new(buffer);
+        let mut scope_list = VecDeque::new();
+        scope_list.push_front(ScopeLevels::Global);
 
-        Ok(Self { path, lexer })
+        Ok(Self {
+            path,
+            lexer,
+            scope_list,
+        })
+    }
+
+    fn parse_error(&self, err: String) -> ParseError {
+        ParseError {
+            message: format!(
+                "error at position {} - {}",
+                self.lexer.get_position_string(),
+                err
+            ),
+        }
     }
 
     fn open_file(path: &String) -> io::Result<BufReader<File>> {
@@ -38,32 +56,31 @@ impl Parser {
 
     pub fn parse_scope(&mut self, scope_level: ScopeLevels) -> Result<Scope, ParseError> {
         let mut scope = Scope { body: Vec::new() };
-
         let mut token = self.lexer.next_token()?;
 
-        if scope_level == ScopeLevels::Block {
+        if scope_level == ScopeLevels::Block || scope_level == ScopeLevels::Function {
             if token != Tokens::TLbrace {
-                return Err(ParseError {
-                    message: format!("unexpected token {:?}, expected {{", token),
-                });
+                return Err(self.parse_error(format!("unexpected token {}, expected {{", token)));
             }
+
+            self.scope_list.push_front(scope_level.clone());
         } else {
             self.lexer.put_back_token(token);
         }
+
 
         loop {
             token = self.lexer.next_token()?;
 
             if token == Tokens::TRbrace {
+                self.scope_list.pop_front();
                 break;
             }
 
             if token == Tokens::TEof {
                 match scope_level {
                     ScopeLevels::Block | ScopeLevels::Function => {
-                        return Err(ParseError {
-                            message: format!("unexpected end-of-file"),
-                        })
+                        return Err(self.parse_error(format!("unexpected end-of-file")));
                     }
                     ScopeLevels::Global => {
                         break;
@@ -83,12 +100,24 @@ impl Parser {
                     scope.body.push(trait_def);
                     continue;
                 }
-            } else {
-                if token == Tokens::TReturn {
+            }
+
+            let has_function_scope = self
+                .scope_list
+                .iter()
+                .position(|&s| s == ScopeLevels::Function)
+                != None;
+
+            if token == Tokens::TReturn {
+                if has_function_scope {
                     let return_expr = self.parse_return()?;
                     scope.body.push(return_expr);
                     continue;
                 }
+
+                return Err(
+                    self.parse_error(format!("return is not allowed outside of a function"))
+                );
             }
 
             if token == Tokens::TFn {
@@ -103,24 +132,45 @@ impl Parser {
                 continue;
             }
 
-            if Lexer::is_typename(&token) {
-                self.lexer.put_back_token(token);
-                let decl = self.parse_declaration()?;
-                scope.body.push(decl);
+            if token == Tokens::TFor {
+                let for_expr = self.parse_for()?;
+                scope.body.push(for_expr);
                 continue;
             }
 
-            let valid_expressions = match scope_level {
-                ScopeLevels::Block | ScopeLevels::Function => "return, fn, while",
-                ScopeLevels::Global => "dto, trait, fn, while",
-            };
+            if Lexer::is_typename(token.clone()) {
+                let expr = match token.clone() {
+                    Tokens::TIdentifier(_) => {
+                        self.lexer.put_back_token(token);
 
-            return Err(ParseError {
-                message: format!(
-                    "unexpected token {:?}, expected one of {}",
-                    token, valid_expressions
-                ),
-            });
+                        match self.lexer.peek_token()? {
+                            Tokens::TLparen => {
+                                let fn_call = self.parse_function_call()?;
+                                scope.body.push(fn_call);
+                                Some(())
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => {
+                        self.lexer.put_back_token(token);
+                        let decl = self.parse_declaration()?;
+                        scope.body.push(decl);
+                        continue;
+                    }
+                };
+
+                if let Some(()) = expr {
+                    continue;
+                }
+            }
+
+            scope.body.push(self.parse_expression()?);
+            token = self.lexer.next_token()?;
+
+            if token != Tokens::TSemi {
+                return Err(self.parse_error(format!("unexpected token {}, expected ;", token)));
+            }
         }
         return Ok(scope);
     }
@@ -131,18 +181,14 @@ impl Parser {
         let name = match token {
             Tokens::TIdentifier(id) => id,
             token => {
-                return Err(ParseError {
-                    message: format!("unexpected token: {:?}", token.to_string()),
-                })
+                return Err(self.parse_error(format!("unexpected token: {}", token.to_string())));
             }
         };
 
         token = self.lexer.next_token()?;
 
         if token != Tokens::TLbrace {
-            return Err(ParseError {
-                message: format!("expected '{{', found {token}"),
-            });
+            return Err(self.parse_error(format!("expected '{{', found {token}")));
         }
 
         let mut fields = Vec::new();
@@ -152,8 +198,11 @@ impl Parser {
     }
 
     fn parse_dto_field_definition(&mut self) -> Result<DtoFieldDefinition, ParseError> {
-        let field_type = Parser::parse_typename(&self.lexer.next_token()?)?;
-        let field_name = Parser::parse_identifier(self.lexer.next_token()?)?;
+        let mut token = self.lexer.next_token()?;
+        let field_type = self.parse_typename(token)?;
+
+        token = self.lexer.next_token()?;
+        let field_name = self.parse_identifier(token)?;
 
         return Ok(DtoFieldDefinition {
             field_type,
@@ -186,16 +235,15 @@ impl Parser {
             return self.parse_dto_definition(list);
         }
 
-        return Err(ParseError {
-            message: format!("unexpected token {:?}, expected , or }}", token),
-        });
+        return Err(self.parse_error(format!("unexpected token {}, expected , or }}", token)));
     }
 
     fn parse_function_definition(
         &mut self,
         for_trait: bool,
     ) -> Result<Box<Expression>, ParseError> {
-        let name = Parser::parse_identifier(self.lexer.next_token()?)?;
+        let maybe_identifier = self.lexer.next_token()?;
+        let name = self.parse_identifier(maybe_identifier)?;
         let mut parameters: Vec<FunctionParameter> = Vec::new();
 
         let mut token = self.lexer.next_token()?;
@@ -207,12 +255,11 @@ impl Parser {
                 token = self.lexer.next_token()?;
 
                 if token != Tokens::TColon {
-                    return Err(ParseError {
-                        message: format!("unexpected token {:?}, expected :", token),
-                    });
+                    return Err(self.parse_error(format!("unexpected token {}, expected :", token)));
                 }
 
-                let typename = Parser::parse_typename(&self.lexer.next_token()?)?;
+                let maybe_typename = self.lexer.next_token()?;
+                let typename = self.parse_typename(maybe_typename)?;
 
                 let body = match for_trait {
                     true => {
@@ -225,16 +272,14 @@ impl Parser {
                                 Some(self.parse_scope(ScopeLevels::Block)?)
                             }
                             _ => {
-                                return Err(ParseError {
-                                    message: format!(
-                                        "unexpected token {:?}, expected ; or {{",
-                                        token
-                                    ),
-                                })
+                                return Err(self.parse_error(format!(
+                                    "unexpected token {}, expected ; or {{",
+                                    token
+                                )));
                             }
                         }
                     }
-                    false => Some(self.parse_scope(ScopeLevels::Block)?),
+                    false => Some(self.parse_scope(ScopeLevels::Function)?),
                 };
 
                 return Ok(Box::new(Expression::FunctionDefinition(
@@ -245,9 +290,7 @@ impl Parser {
                     body,
                 )));
             }
-            _ => Err(ParseError {
-                message: format!("unexpected token {:?}, expected (", token),
-            }),
+            _ => Err(self.parse_error(format!("unexpected token {}, expected (", token))),
         }
     }
 
@@ -276,14 +319,16 @@ impl Parser {
             return self.parse_function_parameters(parameters);
         }
 
-        return Err(ParseError {
-            message: format!("unexpected token {:?}, expected , or )", token),
-        });
+        return Err(self.parse_error(format!("unexpected token {}, expected , or )", token)));
     }
 
     fn parse_function_parameter(&mut self) -> Result<FunctionParameter, ParseError> {
-        let param_type = Parser::parse_typename(&self.lexer.next_token()?)?;
-        let name = Parser::parse_identifier(self.lexer.next_token()?)?;
+        let maybe_typename = self.lexer.next_token()?;
+        let param_type = self.parse_typename(maybe_typename)?;
+
+        let maybe_name = self.lexer.next_token()?;
+        let name = self.parse_identifier(maybe_name)?;
+
         return Ok(FunctionParameter {
             typename: param_type,
             name,
@@ -293,14 +338,12 @@ impl Parser {
 
     fn parse_trait_definition(&mut self) -> Result<Expression, ParseError> {
         let mut token = self.lexer.next_token()?;
-        let name = Parser::parse_identifier(token)?;
+        let name = self.parse_identifier(token)?;
 
         token = self.lexer.next_token()?;
 
         if token != Tokens::TLbrace {
-            return Err(ParseError {
-                message: format!("unexpected token {:?}, expected {{", token),
-            });
+            return Err(self.parse_error(format!("unexpected token {}, expected {{", token)));
         }
 
         let mut functions: Vec<Box<Expression>> = Vec::new();
@@ -316,12 +359,58 @@ impl Parser {
                 continue;
             }
 
-            return Err(ParseError {
-                message: format!("unexpected token {:?}, expected fn or }}", token),
-            });
+            return Err(self.parse_error(format!("unexpected token {}, expected fn or }}", token)));
         }
 
         return Ok(Expression::TraitDefinition(name, functions));
+    }
+
+    fn parse_for(&mut self) -> Result<Expression, ParseError> {
+        let mut token = self.lexer.next_token()?;
+        let has_parens = token == Tokens::TLparen;
+
+        if !has_parens {
+            self.lexer.put_back_token(token);
+        }
+
+        let maybe_iterator_var_name = self.parse_expression()?;
+        let iterator_var_name = match maybe_iterator_var_name {
+            Expression::IdentifierExpression(id) => Expression::IdentifierExpression(id),
+            _ => return Err(self.parse_error(format!("expected ientifier"))),
+        };
+
+        token = self.lexer.next_token()?;
+
+        match token {
+            Tokens::TIn => (),
+            _ => return Err(self.parse_error(format!("expected token {}, expected 'in'", token))),
+        }
+
+        let expr = self.parse_expression()?;
+
+        token = self.lexer.next_token()?;
+
+        if has_parens && token != Tokens::TRparen {
+            return Err(self.parse_error(format!(
+                "unmatched '(' in for loop expression, expected ')' before opening '{{'"
+            )));
+        }
+
+        if !has_parens && token == Tokens::TRparen {
+            return Err(self.parse_error(format!("found closing ')' in for loop expression with no opening '(', expected opening '{{' instead")));
+        }
+
+        if !has_parens {
+            self.lexer.put_back_token(token);
+        }
+
+        let body = self.parse_scope(ScopeLevels::Block)?;
+
+        return Ok(Expression::ForLoop(
+            Box::new(iterator_var_name),
+            Box::new(expr),
+            body,
+        ));
     }
 
     fn parse_while(&mut self) -> Result<Expression, ParseError> {
@@ -331,8 +420,11 @@ impl Parser {
     }
 
     fn parse_declaration(&mut self) -> Result<Expression, ParseError> {
-        let typename = Parser::parse_typename(&self.lexer.next_token()?)?;
-        let id = Parser::parse_identifier(self.lexer.next_token()?)?;
+        let maybe_typename = self.lexer.next_token()?;
+        let typename = self.parse_typename(maybe_typename)?;
+
+        let maybe_id = self.lexer.next_token()?;
+        let id = self.parse_identifier(maybe_id)?;
 
         let mut token = self.lexer.next_token()?;
 
@@ -344,29 +436,30 @@ impl Parser {
 
                 match rhs {
                     Expression::NOP => {
-                        return Err(ParseError {
-                            message: format!("unexpected token ;, expected expression"),
-                        })
+                        return Err(
+                            self.parse_error(format!("unexpected token ;, expected expression"))
+                        );
                     }
                     _ => {
                         token = self.lexer.next_token()?;
-                        //println!("decl token: {}", token);
 
                         match token {
                             Tokens::TSemi => Some(Box::new(rhs)),
                             _ => {
-                                return Err(ParseError {
-                                    message: format!("unexpected token {:?}, expected ;", token),
-                                })
+                                return Err(self.parse_error(format!(
+                                    "unexpected token {}, expected ;",
+                                    token
+                                )));
                             }
                         }
                     }
                 }
             }
             _ => {
-                return Err(ParseError {
-                    message: format!("unexpected token {:?}, expected ; or expression", token),
-                })
+                return Err(self.parse_error(format!(
+                    "unexpected token {}, expected ; or expression",
+                    token
+                )));
             }
         };
 
@@ -375,7 +468,14 @@ impl Parser {
 
     fn parse_return(&mut self) -> Result<Expression, ParseError> {
         let return_expr = self.parse_expression()?;
-        return Ok(Expression::ReturnExpression(Box::new(return_expr)));
+
+        let token = self.lexer.next_token()?;
+
+        if token == Tokens::TSemi {
+            return Ok(Expression::ReturnExpression(Box::new(return_expr)));
+        }
+
+        return Err(self.parse_error(format!("unexpected token {}, expected ;", token)));
     }
 
     fn parse_expression(&mut self) -> Result<Expression, ParseError> {
@@ -397,10 +497,6 @@ impl Parser {
                 let rhs = self.parse_assignment_expression()?;
                 return Ok(Expression::Assignment(Box::new(lhs), Box::new(rhs)));
             }
-            /*Tokens::TSemi => {
-                self.lexer.put_back_token(token);
-                Ok(lhs)
-            }*/
             _ => {
                 self.lexer.put_back_token(token);
                 return Ok(lhs);
@@ -485,9 +581,8 @@ impl Parser {
                 Tokens::TLte => ComparisonOperator::LessThanOrEqual,
                 Tokens::TGte => ComparisonOperator::GreaterThanOrEqual,
                 _ => {
-                    return Err(ParseError {
-                        message: format!("unexpected token {}, expected expression", token),
-                    });
+                    return Err(self
+                        .parse_error(format!("unexpected token {}, expected expression", token)));
                 }
             };
 
@@ -510,9 +605,8 @@ impl Parser {
                 Tokens::TPlus => ArithmeticOperator::Plus,
                 Tokens::TMinus => ArithmeticOperator::Minus,
                 _ => {
-                    return Err(ParseError {
-                        message: format!("unexpected token {}, expected expression", token),
-                    });
+                    return Err(self
+                        .parse_error(format!("unexpected token {}, expected expression", token)));
                 }
             };
 
@@ -525,20 +619,19 @@ impl Parser {
     }
 
     fn parse_multiplicative_arithmetic_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut lhs = self.parse_primary_expression()?;
+        let mut lhs = self.parse_function_call()?;
         let mut token = self.lexer.next_token()?;
 
         while token == Tokens::TMult || token == Tokens::TDiv || token == Tokens::TMod {
-            let rhs = self.parse_primary_expression()?;
+            let rhs = self.parse_function_call()?;
 
             let op = match token {
                 Tokens::TMult => ArithmeticOperator::Multiply,
                 Tokens::TDiv => ArithmeticOperator::Divide,
                 Tokens::TMod => ArithmeticOperator::Mod,
                 _ => {
-                    return Err(ParseError {
-                        message: format!("unexpected token {}, expected expression", token),
-                    });
+                    return Err(self
+                        .parse_error(format!("unexpected token {}, expected expression", token)));
                 }
             };
 
@@ -551,19 +644,21 @@ impl Parser {
     }
 
     fn parse_function_call(&mut self) -> Result<Expression, ParseError> {
-        let id = self.lexer.next_token()?;
+        let expr = self.parse_primary_expression()?;
 
-        match id {
-            Tokens::TIdentifier(id) => {
-                if self.lexer.peek_token()? == Tokens::TLparen {
-                    let arguments: Vec<FunctionArgument> = Vec::new();
+        match expr {
+            Expression::IdentifierExpression(id) => {
+                let token = self.lexer.next_token()?;
+                if token == Tokens::TLparen {
+                    let mut arguments: Vec<FunctionArgument> = Vec::new();
                     self.parse_function_arguments(&mut arguments)?;
-                    return;
+                    return Ok(Expression::FunctionCall(id, arguments));
                 } else {
-                    self.parse_primary_expression();
+                    self.lexer.put_back_token(token);
+                    return Ok(Expression::IdentifierExpression(id));
                 }
             }
-            _ => self.parse_primary_expression(),
+            e => Ok(e),
         }
     }
 
@@ -571,15 +666,32 @@ impl Parser {
         &mut self,
         arguments: &mut Vec<FunctionArgument>,
     ) -> Result<(), ParseError> {
-        // consume the '('
-        self.lexer.next_token()?;
         let mut token = self.lexer.next_token()?;
 
         while token != Tokens::TRparen {
-            let arg = FunctionArgument { expr: self.parse_expression()? };
+            self.lexer.put_back_token(token);
+
+            let arg = FunctionArgument {
+                expr: self.parse_expression()?,
+            };
             arguments.push(arg);
 
-            token = self.lexer.next_token();
+            token = self.lexer.next_token()?;
+
+            if token == Tokens::TComma {
+                token = self.lexer.next_token()?;
+                continue;
+                //return Err(ParseError { message: format!("unexpected token '{}', expected ',' in function argument list", token) });
+            }
+
+            if token == Tokens::TRparen {
+                continue;
+            }
+
+            return Err(self.parse_error(format!(
+                "unexpected token '{}', expected ',' or ')' in function argument list",
+                token
+            )));
         }
 
         Ok(())
@@ -594,7 +706,7 @@ impl Parser {
                 token = self.lexer.next_token()?;
 
                 if token != Tokens::TRparen {
-                    return Err(ParseError { message: format!("unexpected token {:?}, expected )", token) });
+                    return Err(self.parse_error(format!("unexpected token {}, expected )", token)));
                 }
 
                 return Ok(expr);
@@ -605,12 +717,12 @@ impl Parser {
             Tokens::TFalse => Ok(Expression::BooleanConstant(false)),
             Tokens::TRealValue(value) => Ok(Expression::RealConstant(value)),
             Tokens::TStringValue(value) => Ok(Expression::StringConstant(value)),
-            _ => Err(ParseError { message: format!("unexpected token {:?}, expected identifier, integer value, bool value, real value, or string value", token) }),
+            _ => Err(self.parse_error(format!("unexpected token {}, expected identifier, integer value, bool value, real value, or string value", token))),
         }
     }
 
-    fn parse_typename(token: &Tokens) -> Result<Types, ParseError> {
-        let is_typename = Lexer::is_typename(token);
+    fn parse_typename(&self, token: Tokens) -> Result<Types, ParseError> {
+        let is_typename = Lexer::is_typename(token.clone());
         let typename = match is_typename {
             true => match token {
                 Tokens::TBool => Ok(Types::BoolType),
@@ -620,33 +732,27 @@ impl Parser {
                 Tokens::TReal => Ok(Types::RealType),
                 Tokens::TStr => Ok(Types::StringType),
                 Tokens::TIdentifier(id) => Ok(Types::CustomType(id.clone())),
-                _ => Err(ParseError {
-                    message: format!(
-                        "unexpected token {:?}, expected type name",
-                        token.to_string()
-                    ),
-                }),
-            },
-            false => Err(ParseError {
-                message: format!(
-                    "unexpected token {:?}, expected type name",
+                _ => Err(self.parse_error(format!(
+                    "unexpected token {}, expected type name",
                     token.to_string()
-                ),
-            }),
+                ))),
+            },
+            false => Err(self.parse_error(format!(
+                "unexpected token {}, expected type name",
+                token.to_string()
+            ))),
         };
 
         return typename;
     }
 
-    fn parse_identifier(token: Tokens) -> Result<String, ParseError> {
+    fn parse_identifier(&self, token: Tokens) -> Result<String, ParseError> {
         match token {
             Tokens::TIdentifier(id) => Ok(id),
-            _ => Err(ParseError {
-                message: format!(
-                    "unexpected token {:?}, expected identifier",
-                    token.to_string()
-                ),
-            }),
+            _ => Err(self.parse_error(format!(
+                "unexpected token {}, expected identifier",
+                token.to_string()
+            ))),
         }
     }
 }

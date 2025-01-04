@@ -1,37 +1,5 @@
 use std::fmt::Display;
 
-pub enum ExpressionType {
-    Bool,
-    Int,
-    Real,
-    String,
-    Id,
-    Decl,
-    Assign,
-    Dto,
-    Fn,
-    FnCall,
-    Attach,
-    Trait,
-    While,
-    For,
-    If,
-    Return,
-    Op,
-    Or,
-    And,
-    Eq,
-    Lt,
-    Gt,
-    Le,
-    Ge,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Nop,
-}
-
 #[derive(Debug)]
 pub enum Types {
     BoolType,
@@ -171,12 +139,15 @@ pub enum Expression {
     TraitDefinition(String, Vec<Box<Expression>>),
     // Guard, Body
     WhileLoop(Box<Expression>, Scope),
+    // Iterator Variable Name, Expression
+    ForLoop(Box<Expression>, Box<Expression>, Scope),
     // EXPR
     ReturnExpression(Box<Expression>),
+    // Nop
     NOP,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScopeLevels {
     Block,
     Function,
@@ -384,7 +355,16 @@ impl Expression {
                     guard_str, body_str
                 )
             }
-            Self::ReturnExpression(expression) => format!("{{\"type\": \"return\", \"expr\": {}}}", expression.to_json()),
+            Self::ForLoop(iterator_var_name, iterator_exp, body) => format!(
+                "{{\"type\": \"for\", \"var\": {}, \"iterator\": {}, \"body\": {}}}",
+                iterator_var_name.to_json(),
+                iterator_exp.to_json(),
+                body.to_json()
+            ),
+            Self::ReturnExpression(expression) => format!(
+                "{{\"type\": \"return\", \"expr\": {}}}",
+                expression.to_json()
+            ),
             Self::NOP => format!("{{\"type\": \"nop\"}}"),
         }
     }

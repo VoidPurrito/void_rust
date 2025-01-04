@@ -22,10 +22,12 @@ pub enum Tokens {
     TEof,
     TEq,
     TFalse,
+    TFor,
     TFn,
     TGt,
     TGte,
     TIf,
+    TIn,
     TInt,
     TLbrace,
     TLbrack,
@@ -75,10 +77,12 @@ impl Display for Tokens {
             Self::TEof => write!(f, "<eof>"),
             Self::TEq => write!(f, "=="),
             Self::TFalse => write!(f, "false"),
+            Self::TFor => write!(f, "for"),
             Self::TFn => write!(f, "fn"),
             Self::TGt => write!(f, ">"),
             Self::TGte => write!(f, ">="),
             Self::TIf => write!(f, "if"),
+            Self::TIn => write!(f, "in"),
             Self::TInt => write!(f, "int"),
             Self::TLbrace => write!(f, "{{"),
             Self::TLbrack => write!(f, "["),
@@ -116,8 +120,8 @@ impl Display for Tokens {
 
 pub struct Lexer {
     pub buffer: BufReader<File>,
-    pub current_line: u32,
-    pub current_char: u32,
+    pub current_line: usize,
+    pub current_char: usize,
     pub token_buffer: VecDeque<Tokens>,
 }
 
@@ -125,20 +129,19 @@ impl Lexer {
     pub fn new(buffer: BufReader<File>) -> Self {
         Self {
             buffer,
-            current_char: 0,
-            current_line: 0,
+            current_char: 1,
+            current_line: 1,
             token_buffer: VecDeque::new(),
         }
     }
 
     pub fn next_token(&mut self) -> Result<Tokens, ParseError> {
         let token = self._next_token()?;
-        // println!("TOKEN: {}", token);
         return Ok(token);
     }
 
     pub fn _next_token(&mut self) -> Result<Tokens, ParseError> {
-        match self.token_buffer.pop_front() {
+        match self.token_buffer.pop_back() {
             Some(t) => return Ok(t),
             None => {}
         }
@@ -242,6 +245,7 @@ impl Lexer {
             ch if ch.is_whitespace() => {
                 if ch == '\n' {
                     self.current_line += 1;
+                    self.current_char = 0;
                 }
 
                 return self.next_token();
@@ -250,26 +254,14 @@ impl Lexer {
                 token.push_str(&ch.to_string());
 
                 loop {
-                    match self.buffer.read(&mut read_buffer) {
-                        Ok(count) => {
-                            if count < 1 {
-                                break;
-                            }
-                        }
-                        Err(_) => {
-                            return Err(ParseError {
-                                message: String::from(FAILED_TO_READ_FILE),
-                            })
-                        }
-                    };
+                    let ch = self.get_next_char()?;
 
-                    let read_ch = read_buffer[0] as char;
-                    if !read_ch.is_ascii_alphanumeric() && read_ch != '_' {
+                    if !ch.is_ascii_alphanumeric() && ch != '_' {
                         self.put_back_char()?;
                         break;
                     }
 
-                    token.push_str(&String::from(read_ch));
+                    token.push_str(&String::from(ch));
                 }
 
                 let matched_token = match token {
@@ -279,8 +271,10 @@ impl Lexer {
                     token if token == "dto" => Tokens::TDto,
                     token if token == "else" => Tokens::TElse,
                     token if token == "false" => Tokens::TFalse,
+                    token if token == "for" => Tokens::TFor,
                     token if token == "fn" => Tokens::TFn,
                     token if token == "if" => Tokens::TIf,
+                    token if token == "in" => Tokens::TIn,
                     token if token == "int" => Tokens::TInt,
                     token if token == "map" => Tokens::TMap,
                     token if token == "not" => Tokens::TNot,
@@ -364,9 +358,13 @@ impl Lexer {
         }
     }
 
+    pub fn get_position_string(&self) -> String {
+        format!("{}:{}", self.current_line, self.current_char)
+    }
+
     pub fn peek_token(&mut self) -> Result<Tokens, ParseError> {
         let token = self._next_token()?;
-        self.put_back_token(token.clone());
+        self.token_buffer.push_front(token.clone());
         return Ok(token);
     }
 
@@ -390,6 +388,7 @@ impl Lexer {
             return Ok(None);
         }
 
+        self.current_char += count;
         return Ok(Some(String::from_utf8(str_buffer).unwrap()));
     }
 
@@ -410,6 +409,7 @@ impl Lexer {
 
         let ch = read_buffer[0] as char;
         self.current_char += 1;
+
         return Ok(ch);
     }
 
@@ -458,7 +458,7 @@ impl Lexer {
         }
     }
 
-    pub fn is_typename(token: &Tokens) -> bool {
+    pub fn is_typename(token: Tokens) -> bool {
         match token {
             Tokens::TBool
             | Tokens::TInt
