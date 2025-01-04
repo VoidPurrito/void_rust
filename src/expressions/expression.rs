@@ -321,7 +321,7 @@ impl Expression {
             }
             Self::Module(name, body) => {
                 format!(
-                    "{{\"module_name\":\"{}\", \"body\": [{}]}}",
+                    "{{\"module_name\": \"{}\", \"body\": [{}]}}",
                     name,
                     body.to_json(),
                 )

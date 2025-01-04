@@ -1,4 +1,4 @@
 [package]
-name = "Void" # the name of the package
+name = "void" # the name of the package
 version = "0.1.0"    # the current version, obeying semver
 authors = ["Nikhil Kowshi <contact@nikhilkowshik.com>"]
