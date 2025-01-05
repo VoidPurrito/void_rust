@@ -199,20 +199,24 @@ impl Parser {
             if Lexer::is_typename(&token) {
                 let expr = match token.clone() {
                     Tokens::TIdentifier(_) => {
+                        let next_token = self.lexer.peek_token()?; //token2.clone();
                         self.lexer.put_back_token(token);
-                        token = self.lexer.peek_token()?;
 
-                        match token {
+                        match next_token {
                             Tokens::TLparen => {
                                 let fn_call = self.parse_function_call()?;
                                 scope.body.push(fn_call);
 
                                 if self.lexer.peek_token()? != Tokens::TSemi {
-                                    return Err(self.parse_error(format!("unexpected token {}, expected ';' af end of functino call", token)));
+                                    return Err(self.parse_error(format!("unexpected token {}, expected ';' af end of functino call", next_token)));
                                 }
 
                                 self.lexer.next_token()?;
-
+                                Some(())
+                            }
+                            Tokens::TIdentifier(_) => {
+                                let decl = self.parse_declaration(AccessModifiers::Private)?;
+                                scope.body.push(decl); 
                                 Some(())
                             }
                             _ => None,
