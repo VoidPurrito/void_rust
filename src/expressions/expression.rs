@@ -15,14 +15,14 @@ pub enum Types {
 #[derive(Debug)]
 pub enum AccessModifiers {
     Public,
-    // Private,
+    Private,
 }
 
 impl Display for AccessModifiers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Public => write!(f, "public"),
-            // Self::Private => write!(f, "private"),
+            Self::Private => write!(f, "private"),
         }
     }
 }
@@ -102,8 +102,8 @@ pub enum Expression {
     ComparisonExpression(ComparisonOperator, Box<Expression>, Box<Expression>),
     // Operator, LHS, RHS
     ArithmeticExpression(ArithmeticOperator, Box<Expression>, Box<Expression>),
-    // Type, ID, RHS
-    Declaration(Types, String, Option<Box<Expression>>),
+    // Type, Name, RHS
+    Declaration(AccessModifiers, Types, String, Option<Box<Expression>>),
     // ID, Field Definitions
     Dto(String, Vec<DtoFieldDefinition>),
     // Access Modifier, Type, Name, Parameters, Body
@@ -114,8 +114,9 @@ pub enum Expression {
         Vec<FunctionParameter>,
         Option<Scope>,
     ),
+    // Function Name, Arguments
     FunctionCall(String, Vec<FunctionArgument>),
-    // ID
+    // Name
     IdentifierExpression(String),
     // Int Value
     IntegerConstant(i64),
@@ -127,12 +128,17 @@ pub enum Expression {
     StringConstant(String),
     // Name, Function Definitions
     TraitDefinition(String, Vec<Box<Expression>>),
+    // Class Name, Instance Variables, Method Definitions
+    ClassDefinition(String, Vec<Box<Expression>>, Vec<Box<Expression>>),
     // Guard, Body
     WhileLoop(Box<Expression>, Scope),
     // Iterator Variable Name, Expression
     ForLoop(Box<Expression>, Box<Expression>, Scope),
     // Guard, Body, Else If
     If(Option<Box<Expression>>, Scope, Option<Box<Expression>>),
+    // Expression, Next Chained Expression
+    // eg: a.b.c, a.b.c()
+    ChainedExpression(Box<Expression>, Box<Expression>),
     // Return Value Expression
     ReturnExpression(Box<Expression>),
     Break,
@@ -145,6 +151,7 @@ pub enum ScopeType {
     Function,
     Global,
     Loop,
+    Method,
 }
 
 impl Scope {
@@ -256,41 +263,44 @@ impl Expression {
                 "{{\"type\": \"string\", \"value\": \"{}\"}}",
                 value.replace("\n", "\\n")
             ),
-            Self::Declaration(typename, id, rhs) => {
+            Self::Declaration(access_modifier, typename, id, rhs) => {
                 let rhs = match rhs {
                     Some(v) => v.to_json(),
                     None => String::from("\"null\""),
                 };
 
-                return format!("{{\"type\": \"declaration\", \"typename\": \"{}\", \"id\": \"{}\", \"rhs\": {}}}", typename, id, rhs);
+                return format!("{{\"type\": \"declaration\", \"access_modifier\": \"{}\", \"typename\": \"{}\", \"id\": \"{}\", \"rhs\": {}}}", access_modifier, typename, id, rhs);
             }
             Self::Dto(name, fields) => {
-                let mut strings = Vec::new();
-
-                for f in fields.iter() {
-                    strings.push(format!(
-                        "{{\"field_type\": \"{}\", \"field_name\": \"{}\"}}",
-                        f.field_type.to_string(),
-                        f.field_name
-                    ));
-                }
+                let strings = fields
+                    .iter()
+                    .map(|f| {
+                        format!(
+                            "{{\"field_type\": \"{}\", \"field_name\": \"{}\"}}",
+                            f.field_type.to_string(),
+                            f.field_name
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(",");
 
                 return format!(
                     "{{\"type\": \"dto\", \"name\": \"{}\", \"fields\": [{}]}}",
-                    name,
-                    strings.join(",")
+                    name, strings,
                 );
             }
             Self::FunctionDefinition(access_modifier, typename, name, parameters, body) => {
-                let mut strings = Vec::new();
-
-                for f in parameters.iter() {
-                    strings.push(format!(
-                        "{{\"type\": \"{}\", \"name\": \"{}\"}}",
-                        f.typename.to_string(),
-                        f.name
-                    ));
-                }
+                let strings = parameters
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{{\"type\": \"{}\", \"name\": \"{}\"}}",
+                            p.typename.to_string(),
+                            p.name
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(",");
 
                 let body = match body {
                     Some(b) => b.to_json(),
@@ -302,21 +312,20 @@ impl Expression {
                     access_modifier,
                     typename,
                     name,
-                    strings.join(","),
+                    strings,
                     body,
                 );
             }
             Self::FunctionCall(id, arguments) => {
-                let mut strings = Vec::new();
-
-                for a in arguments.iter() {
-                    strings.push(a.expr.to_json());
-                }
+                let strings = arguments
+                    .iter()
+                    .map(|x| x.expr.to_json())
+                    .collect::<Vec<String>>()
+                    .join(",");
 
                 return format!(
                     "{{\"type\": \"function_call\", \"id\": \"{}\", \"arguments\": [{}]}}",
-                    id,
-                    strings.join(","),
+                    id, strings,
                 );
             }
             Self::Module(name, body) => {
@@ -327,17 +336,33 @@ impl Expression {
                 )
             }
             Self::TraitDefinition(name, functions) => {
-                let mut strings: Vec<String> = Vec::new();
-
-                for func in functions.iter() {
-                    strings.push(func.to_json());
-                }
+                let strings = functions
+                    .iter()
+                    .map(|f| f.to_json())
+                    .collect::<Vec<String>>()
+                    .join(",");
 
                 return format!(
                     "{{\"type\": \"trait\", \"name\": \"{}\", \"body\": [{}]}}",
-                    name,
-                    strings.join(",")
+                    name, strings
                 );
+            }
+            Self::ClassDefinition(name, instance_variables, methods) => {
+                let variables_str = instance_variables
+                    .iter()
+                    .map(|x| x.to_json())
+                    .collect::<Vec<String>>()
+                    .join(",");
+                let methods_str = methods
+                    .iter()
+                    .map(|x| x.to_json())
+                    .collect::<Vec<String>>()
+                    .join(",");
+
+                format!(
+                    "{{\"type\": \"class\", \"name\": \"{}\", \"instance_variabled\": [{}], \"methods\": [{}]}}",
+                    name, variables_str, methods_str
+                )
             }
             Self::WhileLoop(guard, body) => {
                 let guard_str = guard.to_json();
@@ -375,11 +400,19 @@ impl Expression {
                     None => String::from("null"),
                 };
 
-                format!("{{\"type\": \"{}\", \"guard\": {}, \"body\": {}, \"next\": {}}}", _type, guard_json, body_json, next_json)
+                format!(
+                    "{{\"type\": \"{}\", \"guard\": {}, \"body\": {}, \"next\": {}}}",
+                    _type, guard_json, body_json, next_json
+                )
             }
             Self::ReturnExpression(expression) => format!(
                 "{{\"type\": \"return\", \"expr\": {}}}",
                 expression.to_json()
+            ),
+            Self::ChainedExpression(lhs, rhs) => format!(
+                "{{\"type\": \".\", \"lhs\": {}, \"rhs\": {}}}",
+                lhs.to_json(),
+                rhs.to_json()
             ),
             Self::Break => format!("{{\"type\": \"break\"}}"),
             Self::Continue => format!("{{\"type\": \"continue\"}}"),

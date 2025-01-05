@@ -94,12 +94,18 @@ impl Parser {
                     scope.body.push(trait_def);
                     continue;
                 }
+
+                if token == Tokens::TClass {
+                    let class_def = self.parse_class_definition()?;
+                    scope.body.push(class_def);
+                    continue;
+                }
             }
 
             let has_function_scope = self
                 .scope_list
                 .iter()
-                .position(|&s| s == ScopeType::Function)
+                .position(|&s| s == ScopeType::Function || s == ScopeType::Method)
                 != None;
 
             if token == Tokens::TReturn {
@@ -138,12 +144,6 @@ impl Parser {
                 )));
             }
 
-            if token == Tokens::TFn {
-                let function_def = self.parse_function_definition(false)?;
-                scope.body.push(*function_def);
-                continue;
-            }
-
             if token == Tokens::TWhile {
                 let while_expr = self.parse_while()?;
                 scope.body.push(while_expr);
@@ -161,16 +161,58 @@ impl Parser {
                 scope.body.push(if_expr);
                 continue;
             }
+            if token == Tokens::TFn {
+                let function_def = self.parse_function_definition(
+                    false,
+                    AccessModifiers::Private,
+                    ScopeType::Function,
+                )?;
+                scope.body.push(*function_def);
+                continue;
+            }
 
-            if Lexer::is_typename(token.clone()) {
+            if token == Tokens::TPub {
+                token = self.lexer.next_token()?;
+
+                if token == Tokens::TFn {
+                    let function_def = self.parse_function_definition(
+                        false,
+                        AccessModifiers::Public,
+                        ScopeType::Function,
+                    )?;
+                    scope.body.push(*function_def);
+                    continue;
+                }
+
+                if Lexer::is_typename(&token) {
+                    let decl = self.parse_declaration(AccessModifiers::Public)?;
+                    scope.body.push(decl);
+                    continue;
+                }
+
+                return Err(self.parse_error(format!(
+                    "unexpected token {}, expected declaration type or fn for functino definition",
+                    token
+                )));
+            }
+
+            if Lexer::is_typename(&token) {
                 let expr = match token.clone() {
                     Tokens::TIdentifier(_) => {
                         self.lexer.put_back_token(token);
+                        token = self.lexer.peek_token()?;
 
-                        match self.lexer.peek_token()? {
+                        match token {
                             Tokens::TLparen => {
                                 let fn_call = self.parse_function_call()?;
                                 scope.body.push(fn_call);
+
+                                if self.lexer.peek_token()? != Tokens::TSemi {
+                                    return Err(self.parse_error(format!("unexpected token {}, expected ';' af end of functino call", token)));
+                                }
+
+                                self.lexer.next_token()?;
+
                                 Some(())
                             }
                             _ => None,
@@ -178,7 +220,7 @@ impl Parser {
                     }
                     _ => {
                         self.lexer.put_back_token(token);
-                        let decl = self.parse_declaration()?;
+                        let decl = self.parse_declaration(AccessModifiers::Private)?;
                         scope.body.push(decl);
                         continue;
                     }
@@ -193,6 +235,7 @@ impl Parser {
 
             scope.body.push(self.parse_expression(true)?);
         }
+
         return Ok(scope);
     }
 
@@ -285,6 +328,8 @@ impl Parser {
     fn parse_function_definition(
         &mut self,
         for_trait: bool,
+        access_modifier: AccessModifiers,
+        scope_type: ScopeType,
     ) -> Result<Box<Expression>, ParseError> {
         let maybe_identifier = self.lexer.next_token()?;
         let name = self.parse_identifier(maybe_identifier)?;
@@ -313,7 +358,7 @@ impl Parser {
                             Tokens::TSemi => None,
                             Tokens::TLbrace => {
                                 self.lexer.put_back_token(token);
-                                Some(self.parse_scope(ScopeType::Block)?)
+                                Some(self.parse_scope(scope_type)?)
                             }
                             _ => {
                                 return Err(self.parse_error(format!(
@@ -323,11 +368,11 @@ impl Parser {
                             }
                         }
                     }
-                    false => Some(self.parse_scope(ScopeType::Function)?),
+                    false => Some(self.parse_scope(scope_type)?),
                 };
 
                 return Ok(Box::new(Expression::FunctionDefinition(
-                    AccessModifiers::Public,
+                    access_modifier,
                     typename,
                     name,
                     parameters,
@@ -394,7 +439,8 @@ impl Parser {
         token = self.lexer.next_token()?;
 
         while token != Tokens::TRbrace {
-            let function_def = self.parse_function_definition(true)?;
+            let function_def =
+                self.parse_function_definition(true, AccessModifiers::Public, ScopeType::Method)?;
             functions.push(function_def);
 
             token = self.lexer.next_token()?;
@@ -407,6 +453,63 @@ impl Parser {
         }
 
         return Ok(Expression::TraitDefinition(name, functions));
+    }
+
+    fn parse_class_definition(&mut self) -> Result<Expression, ParseError> {
+        let mut token = self.lexer.next_token()?;
+        let name = match token {
+            Tokens::TIdentifier(id) => id,
+            _ => {
+                return Err(
+                    self.parse_error(format!("unexpected token {}, expected class name", token))
+                )
+            }
+        };
+
+        token = self.lexer.next_token()?;
+
+        if token != Tokens::TLbrace {
+            return Err(self.parse_error(format!(
+                "unexpected token {}, expected opening {{ for class body definition",
+                token
+            )));
+        }
+
+        token = self.lexer.next_token()?;
+
+        let mut instance_variables: Vec<Box<Expression>> = Vec::new();
+        let mut method_definitions: Vec<Box<Expression>> = Vec::new();
+
+        while token != Tokens::TRbrace {
+            let access_modifier: AccessModifiers;
+
+            if token == Tokens::TPub {
+                token = self.lexer.next_token()?;
+                access_modifier = AccessModifiers::Public
+            } else {
+                access_modifier = AccessModifiers::Private;
+            }
+
+            if Lexer::is_typename(&token) {
+                self.lexer.put_back_token(token.clone());
+                let expr = Box::new(self.parse_declaration(access_modifier)?);
+                instance_variables.push(expr);
+            } else if token == Tokens::TFn {
+                let expr =
+                    self.parse_function_definition(false, access_modifier, ScopeType::Method)?;
+                method_definitions.push(expr);
+            } else {
+                return Err(self.parse_error(format!("unexpected token {}, exxpected type name for instance variable definition or 'fn' for function definition", token)));
+            }
+
+            token = self.lexer.next_token()?;
+        }
+
+        return Ok(Expression::ClassDefinition(
+            name,
+            instance_variables,
+            method_definitions,
+        ));
     }
 
     fn parse_for(&mut self) -> Result<Expression, ParseError> {
@@ -491,7 +594,10 @@ impl Parser {
         return Ok(Expression::If(guard, body, None));
     }
 
-    fn parse_declaration(&mut self) -> Result<Expression, ParseError> {
+    fn parse_declaration(
+        &mut self,
+        access_modifier: AccessModifiers,
+    ) -> Result<Expression, ParseError> {
         let maybe_typename = self.lexer.next_token()?;
         let typename = self.parse_typename(maybe_typename)?;
 
@@ -511,7 +617,7 @@ impl Parser {
             }
         };
 
-        return Ok(Expression::Declaration(typename, id, rhs));
+        return Ok(Expression::Declaration(access_modifier, typename, id, rhs));
     }
 
     fn parse_return(&mut self) -> Result<Expression, ParseError> {
@@ -521,17 +627,33 @@ impl Parser {
     }
 
     fn parse_expression(&mut self, requires_delimiter: bool) -> Result<Expression, ParseError> {
-        let expr = self.parse_assignment_expression()?;
+        let mut expr = self.parse_assignment_expression()?;
         let token = self.lexer.next_token()?;
 
-        if (requires_delimiter && token != Tokens::TSemi)
-            || (!requires_delimiter && token == Tokens::TSemi)
-        {
-            return Err(self.parse_error(format!("unexpected token {}, expected ';'", token)));
+        let mut is_chained_expression = false;
+
+        if token == Tokens::TDot {
+            is_chained_expression = match expr {
+                Expression::FunctionCall(_, _) => true,
+                Expression::IdentifierExpression(_) => true,
+                Expression::ChainedExpression(_, _) => true,
+                _ => return Err(self.parse_error(format!("'.' is not allowed here"))),
+            };
+
+            let rhs = self.parse_expression(true)?;
+            expr = Expression::ChainedExpression(Box::new(expr), Box::new(rhs));
         }
 
-        if !requires_delimiter {
-            self.lexer.put_back_token(token);
+        if !is_chained_expression {
+            if (requires_delimiter && token != Tokens::TSemi)
+                || (!requires_delimiter && token == Tokens::TSemi)
+            {
+                return Err(self.parse_error(format!("unexpected token {}, expected ';'", token)));
+            }
+
+            if !requires_delimiter {
+                self.lexer.put_back_token(token);
+            }
         }
 
         return Ok(expr);
@@ -730,7 +852,6 @@ impl Parser {
             if token == Tokens::TComma {
                 token = self.lexer.next_token()?;
                 continue;
-                //return Err(ParseError { message: format!("unexpected token '{}', expected ',' in function argument list", token) });
             }
 
             if token == Tokens::TRparen {
@@ -771,7 +892,7 @@ impl Parser {
     }
 
     fn parse_typename(&self, token: Tokens) -> Result<Types, ParseError> {
-        let is_typename = Lexer::is_typename(token.clone());
+        let is_typename = Lexer::is_typename(&token);
         let typename = match is_typename {
             true => match token {
                 Tokens::TBool => Ok(Types::BoolType),

@@ -15,6 +15,7 @@ pub enum Tokens {
     TBool,
     TBreak,
     TColon,
+    TClass,
     TComma,
     TContinue,
     TDiv,
@@ -71,6 +72,7 @@ impl Display for Tokens {
             Self::TAttach => write!(f, "attach"),
             Self::TBool => write!(f, "bool"),
             Self::TBreak => write!(f, "break"),
+            Self::TClass => write!(f, "class"),
             Self::TColon => write!(f, "colon"),
             Self::TComma => write!(f, "comma"),
             Self::TContinue => write!(f, "continue"),
@@ -140,14 +142,16 @@ impl Lexer {
     }
 
     pub fn next_token(&mut self) -> Result<Tokens, ParseError> {
-        let token = self._next_token()?;
+        let token = self._next_token(false)?;
         return Ok(token);
     }
 
-    pub fn _next_token(&mut self) -> Result<Tokens, ParseError> {
-        match self.token_buffer.pop_back() {
-            Some(t) => return Ok(t),
-            None => {}
+    pub fn _next_token(&mut self, peek: bool) -> Result<Tokens, ParseError> {
+        if !peek {
+            match self.token_buffer.pop_back() {
+                Some(t) => return Ok(t),
+                None => {}
+            }
         }
 
         let mut token = String::new();
@@ -277,32 +281,9 @@ impl Lexer {
                 }
 
                 let matched_token = match token {
-                    token if token == "and" => Tokens::TAnd,
-                    token if token == "attach" => Tokens::TAttach,
-                    token if token == "bool" => Tokens::TBool,
-                    token if token == "break" => Tokens::TBreak,
-                    token if token == "continue" => Tokens::TContinue,
-                    token if token == "dto" => Tokens::TDto,
-                    token if token == "else" => Tokens::TElse,
-                    token if token == "false" => Tokens::TFalse,
-                    token if token == "for" => Tokens::TFor,
-                    token if token == "fn" => Tokens::TFn,
-                    token if token == "if" => Tokens::TIf,
-                    token if token == "in" => Tokens::TIn,
-                    token if token == "int" => Tokens::TInt,
-                    token if token == "map" => Tokens::TMap,
-                    token if token == "mod" => Tokens::TMod,
-                    token if token == "not" => Tokens::TNot,
-                    token if token == "or" => Tokens::TOr,
-                    token if token == "pub" => Tokens::TPub,
-                    token if token == "real" => Tokens::TReal,
-                    token if token == "return" => Tokens::TReturn,
-                    token if token == "str" => Tokens::TStr,
-                    token if token == "to" => Tokens::TTo,
-                    token if token == "trait" => Tokens::TTrait,
-                    token if token == "true" => Tokens::TTrue,
-                    token if token == "var" => Tokens::TVar,
-                    token if token == "while" => Tokens::TWhile,
+                    token if Lexer::get_if_reserved_word(&token) != None => {
+                        Lexer::get_if_reserved_word(&token).unwrap()
+                    }
                     _ => Tokens::TIdentifier(token),
                 };
 
@@ -380,7 +361,7 @@ impl Lexer {
     }
 
     pub fn peek_token(&mut self) -> Result<Tokens, ParseError> {
-        let token = self._next_token()?;
+        let token = self._next_token(true)?;
         self.token_buffer.push_front(token.clone());
         return Ok(token);
     }
@@ -457,7 +438,7 @@ impl Lexer {
         Ok(())
     }
 
-    pub fn is_typename(token: Tokens) -> bool {
+    pub fn is_typename(token: &Tokens) -> bool {
         match token {
             Tokens::TBool
             | Tokens::TInt
@@ -467,6 +448,39 @@ impl Lexer {
             | Tokens::TVar
             | Tokens::TIdentifier(_) => true,
             _ => false,
+        }
+    }
+
+    fn get_if_reserved_word(token: &String) -> Option<Tokens> {
+        match token {
+            token if token == "and" => Some(Tokens::TAnd),
+            token if token == "attach" => Some(Tokens::TAttach),
+            token if token == "bool" => Some(Tokens::TBool),
+            token if token == "break" => Some(Tokens::TBreak),
+            token if token == "class" => Some(Tokens::TClass),
+            token if token == "continue" => Some(Tokens::TContinue),
+            token if token == "dto" => Some(Tokens::TDto),
+            token if token == "else" => Some(Tokens::TElse),
+            token if token == "false" => Some(Tokens::TFalse),
+            token if token == "for" => Some(Tokens::TFor),
+            token if token == "fn" => Some(Tokens::TFn),
+            token if token == "if" => Some(Tokens::TIf),
+            token if token == "in" => Some(Tokens::TIn),
+            token if token == "int" => Some(Tokens::TInt),
+            token if token == "map" => Some(Tokens::TMap),
+            token if token == "mod" => Some(Tokens::TMod),
+            token if token == "not" => Some(Tokens::TNot),
+            token if token == "or" => Some(Tokens::TOr),
+            token if token == "pub" => Some(Tokens::TPub),
+            token if token == "real" => Some(Tokens::TReal),
+            token if token == "return" => Some(Tokens::TReturn),
+            token if token == "str" => Some(Tokens::TStr),
+            token if token == "to" => Some(Tokens::TTo),
+            token if token == "trait" => Some(Tokens::TTrait),
+            token if token == "true" => Some(Tokens::TTrue),
+            token if token == "var" => Some(Tokens::TVar),
+            token if token == "while" => Some(Tokens::TWhile),
+            _ => None,
         }
     }
 }
