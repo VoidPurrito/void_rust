@@ -1,6 +1,7 @@
-use std::fmt::Display;
+use std::fmt;
 
-#[derive(Debug)]
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Types {
     BoolType,
     DynamicType,
@@ -10,15 +11,16 @@ pub enum Types {
     RealType,
     StringType,
     CustomType(String),
+    NoneType,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum AccessModifiers {
     Public,
     Private,
 }
 
-impl Display for AccessModifiers {
+impl fmt::Display for AccessModifiers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Public => write!(f, "public"),
@@ -27,7 +29,7 @@ impl Display for AccessModifiers {
     }
 }
 
-impl Display for Types {
+impl fmt::Display for Types {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BoolType => write!(f, "Booltype"),
@@ -38,6 +40,7 @@ impl Display for Types {
             Self::RealType => write!(f, "RealType"),
             Self::StringType => write!(f, "StringType"),
             Self::CustomType(id) => write!(f, "{id}"),
+            Self::NoneType => write!(f, "none"),
         }
     }
 }
@@ -66,6 +69,7 @@ pub enum ComparisonOperator {
     LessThanOrEqual,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArithmeticOperator {
     Plus,
     Minus,
@@ -116,6 +120,8 @@ pub enum Expression {
     ),
     // Function Name, Arguments
     FunctionCall(String, Vec<FunctionArgument>),
+    // Built-in Name, Arguments
+    BuiltInCall(String, Vec<FunctionArgument>),
     // Name
     IdentifierExpression(String),
     // Int Value
@@ -141,6 +147,8 @@ pub enum Expression {
     ChainedExpression(Box<Expression>, Box<Expression>),
     // Return Value Expression
     ReturnExpression(Box<Expression>),
+    // Exit value
+    ExitExpression(Box<Expression>),
     Break,
     Continue,
 }
@@ -166,7 +174,7 @@ impl Scope {
     }
 }
 
-impl Display for BooleanOperator {
+impl fmt::Display for BooleanOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LogicalOr => write!(f, "or"),
@@ -175,7 +183,7 @@ impl Display for BooleanOperator {
     }
 }
 
-impl Display for EqualityOperator {
+impl fmt::Display for EqualityOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Equals => write!(f, "=="),
@@ -184,7 +192,7 @@ impl Display for EqualityOperator {
     }
 }
 
-impl Display for ComparisonOperator {
+impl fmt::Display for ComparisonOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LessThan => write!(f, "<"),
@@ -195,7 +203,7 @@ impl Display for ComparisonOperator {
     }
 }
 
-impl Display for ArithmeticOperator {
+impl fmt::Display for ArithmeticOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Plus => write!(f, "+"),
@@ -328,6 +336,18 @@ impl Expression {
                     id, strings,
                 );
             }
+            Self::BuiltInCall(id, arguments) => {
+                let strings = arguments
+                    .iter()
+                    .map(|x| x.expr.to_json())
+                    .collect::<Vec<String>>()
+                    .join(",");
+
+                return format!(
+                    "{{\"type\": \"built_in_call\", \"id\": \"{}\", \"arguments\": [{}]}}",
+                    id, strings,
+                );
+            }
             Self::Module(name, body) => {
                 format!(
                     "{{\"module_name\": \"{}\", \"body\": [{}]}}",
@@ -407,6 +427,10 @@ impl Expression {
             }
             Self::ReturnExpression(expression) => format!(
                 "{{\"type\": \"return\", \"expr\": {}}}",
+                expression.to_json()
+            ),
+            Self::ExitExpression(expression) => format!(
+                "{{\"type\": \"exit\", \"expr\": {}}}",
                 expression.to_json()
             ),
             Self::ChainedExpression(lhs, rhs) => format!(

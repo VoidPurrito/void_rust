@@ -2,3 +2,6 @@
 name = "void" # the name of the package
 version = "0.1.0"    # the current version, obeying semver
 authors = ["Nikhil Kowshik <contact@nikhilkowshik.com>"]
+
+[lints.rust]
+unused_variables = "allow"

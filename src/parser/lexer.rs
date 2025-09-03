@@ -1,8 +1,5 @@
 use std::{
-    collections::VecDeque,
-    fmt::Display,
-    fs::File,
-    io::{BufRead, BufReader, Read},
+    collections::VecDeque, fmt::Display, fs::File, io::{BufRead, BufReader, Read}
 };
 
 use super::error::{ParseError, FAILED_TO_READ_FILE, INVALID_TOKEN, UNEXPECTED_EOF};
@@ -14,6 +11,7 @@ pub enum Tokens {
     TAttach,
     TBool,
     TBreak,
+    TBuiltIn(String),
     TColon,
     TClass,
     TComma,
@@ -24,6 +22,7 @@ pub enum Tokens {
     TElse,
     TEof,
     TEq,
+    // TExit,
     TFalse,
     TFor,
     TFn,
@@ -64,6 +63,29 @@ pub enum Tokens {
     TRealValue(f64),
 }
 
+#[derive(Clone)]
+pub struct Token {
+    pub value: Tokens,
+    pub line_number: usize,
+    pub char_number: usize,
+}
+
+impl Token {
+    pub fn new(value: Tokens, line: usize, char: usize) -> Self {
+        Self {
+            value,
+            line_number: line,
+            char_number: char,
+        }
+    }
+}
+
+pub struct Character {
+    pub value: char,
+    pub line_no: usize,
+    pub char_no: usize,
+}
+
 impl Display for Tokens {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -72,6 +94,7 @@ impl Display for Tokens {
             Self::TAttach => write!(f, "attach"),
             Self::TBool => write!(f, "bool"),
             Self::TBreak => write!(f, "break"),
+            Self::TBuiltIn(name) => write!(f, "{name}"),
             Self::TClass => write!(f, "class"),
             Self::TColon => write!(f, "colon"),
             Self::TComma => write!(f, "comma"),
@@ -82,6 +105,7 @@ impl Display for Tokens {
             Self::TElse => write!(f, "else"),
             Self::TEof => write!(f, "<eof>"),
             Self::TEq => write!(f, "=="),
+            // Self::TExit => write!(f, "exit"),
             Self::TFalse => write!(f, "false"),
             Self::TFor => write!(f, "for"),
             Self::TFn => write!(f, "fn"),
@@ -128,7 +152,10 @@ pub struct Lexer {
     pub buffer: BufReader<File>,
     pub current_line: usize,
     pub current_char: usize,
-    pub token_buffer: VecDeque<Tokens>,
+    pub token_buffer: VecDeque<Token>,
+    
+    char_buffer: [usize; 2],
+    char_buffer_idx: usize,
 }
 
 impl Lexer {
@@ -138,15 +165,17 @@ impl Lexer {
             current_char: 1,
             current_line: 1,
             token_buffer: VecDeque::new(),
+            char_buffer: [0, 0],
+            char_buffer_idx: 1,
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Tokens, ParseError> {
+    pub fn next_token(&mut self) -> Result<Token, ParseError> {
         let token = self._next_token(false)?;
         return Ok(token);
     }
 
-    pub fn _next_token(&mut self, peek: bool) -> Result<Tokens, ParseError> {
+    pub fn _next_token(&mut self, peek: bool) -> Result<Token, ParseError> {
         if !peek {
             match self.token_buffer.pop_back() {
                 Some(t) => return Ok(t),
@@ -157,40 +186,40 @@ impl Lexer {
         let mut token = String::new();
         let ch = self.get_next_char()?;
 
-        match ch {
-            '\0' => Ok(Tokens::TEof),
-            '(' => return Ok(Tokens::TLparen),
-            ')' => return Ok(Tokens::TRparen),
-            '{' => return Ok(Tokens::TLbrace),
-            '}' => return Ok(Tokens::TRbrace),
-            '[' => return Ok(Tokens::TLbrack),
-            ']' => return Ok(Tokens::TRbrack),
-            ';' => return Ok(Tokens::TSemi),
-            ':' => return Ok(Tokens::TColon),
-            ',' => return Ok(Tokens::TComma),
-            '+' => return Ok(Tokens::TPlus),
-            '-' => return Ok(Tokens::TMinus),
-            '*' => return Ok(Tokens::TMult),
+        match ch.value {
+            '\0' => Ok(Token::new(Tokens::TEof, ch.line_no, ch.char_no)),
+            '(' => Ok(Token::new(Tokens::TLparen, ch.line_no, ch.char_no)),
+            ')' => Ok(Token::new(Tokens::TRparen, ch.line_no, ch.char_no)),
+            '{' => Ok(Token::new(Tokens::TLbrace, ch.line_no, ch.char_no)),
+            '}' => Ok(Token::new(Tokens::TRbrace, ch.line_no, ch.char_no)),
+            '[' => Ok(Token::new(Tokens::TLbrack, ch.line_no, ch.char_no)),
+            ']' => Ok(Token::new(Tokens::TRbrack, ch.line_no, ch.char_no)),
+            ';' => Ok(Token::new(Tokens::TSemi, ch.line_no, ch.char_no)),
+            ':' => Ok(Token::new(Tokens::TColon, ch.line_no, ch.char_no)),
+            ',' => Ok(Token::new(Tokens::TComma, ch.line_no, ch.char_no)),
+            '%' => Ok(Token::new(Tokens::TMod, ch.line_no, ch.char_no)),
+            '+' => Ok(Token::new(Tokens::TPlus, ch.line_no, ch.char_no)),
+            '-' => Ok(Token::new(Tokens::TMinus, ch.line_no, ch.char_no)),
+            '*' => Ok(Token::new(Tokens::TMult, ch.line_no, ch.char_no)),
             '/' => {
                 let next_ch = self.get_next_char()?;
 
-                if next_ch == '/' {
+                if next_ch.value == '/' {
                     self.get_chars_until(b'\n')?;
-                    self.put_back_char()?;
+                    //self.put_back_char()?;
                     return self.next_token();
                 } else {
-                    return Ok(Tokens::TDiv);
+                    return Ok(Token::new(Tokens::TDiv, ch.line_no, ch.char_no));
                 }
             }
-            '%' => return Ok(Tokens::TMod),
             '=' | '<' | '>' => {
                 let next_ch = self.get_next_char()?;
 
-                match next_ch {
-                    '=' => match ch {
-                        '=' => return Ok(Tokens::TEq),
-                        '<' => return Ok(Tokens::TLte),
-                        '>' => return Ok(Tokens::TGte),
+                match next_ch.value {
+                    '=' => match ch.value {
+                        '=' => return Ok(Token::new(Tokens::TEq, ch.line_no, ch.char_no)),
+                        '<' => return Ok(Token::new(Tokens::TLte, ch.line_no, ch.char_no)),
+                        '>' => return Ok(Token::new(Tokens::TGte, ch.line_no, ch.char_no)),
                         _ => {
                             return Err(ParseError {
                                 message: String::from(FAILED_TO_READ_FILE),
@@ -198,14 +227,14 @@ impl Lexer {
                         }
                     },
                     _ => {
-                        if next_ch != '\0' {
+                        if next_ch.value != '\0' {
                             self.put_back_char()?;
                         }
 
-                        match ch {
-                            '=' => return Ok(Tokens::TAssign),
-                            '<' => return Ok(Tokens::TLt),
-                            '>' => return Ok(Tokens::TGt),
+                        match ch.value {
+                            '=' => return Ok(Token::new(Tokens::TAssign, ch.line_no, ch.char_no)),
+                            '<' => return Ok(Token::new(Tokens::TLt, ch.line_no, ch.char_no)),
+                            '>' => return Ok(Token::new(Tokens::TGt, ch.line_no, ch.char_no)),
                             _ => {
                                 return Err(ParseError {
                                     message: String::from(FAILED_TO_READ_FILE),
@@ -218,8 +247,8 @@ impl Lexer {
             '!' => {
                 let next_ch = self.get_next_char()?;
 
-                if next_ch == '=' {
-                    return Ok(Tokens::TNeq);
+                if next_ch.value == '=' {
+                    return Ok(Token::new(Tokens::TNeq, ch.line_no, ch.char_no));
                 }
 
                 return Err(ParseError {
@@ -256,28 +285,37 @@ impl Lexer {
                     }
                 }
 
-                return Ok(Tokens::TStringValue(token));
+                return Ok(Token::new(Tokens::TStringValue(token), ch.line_no, ch.char_no));
             }
-            ch if ch.is_whitespace() => {
-                if ch == '\n' {
+            val if val.is_whitespace() => {
+                if val == '\n' {
                     self.current_line += 1;
-                    self.current_char = 0;
+                    self.current_char = 1;
                 }
 
                 return self.next_token();
             }
-            ch if ch.is_ascii_alphabetic() || ch == '_' => {
-                token.push_str(&ch.to_string());
+            val if val.is_ascii_alphabetic() || val == '_' => {
+                let lineno = ch.line_no;
+                let charno = ch.char_no;
+                let mut next_ch = ch;
+
+                let mut has_letter = val.is_ascii_alphabetic();
 
                 loop {
-                    let ch = self.get_next_char()?;
+                    if has_letter {
+                        if !next_ch.value.is_ascii_alphanumeric() && next_ch.value != '_' {
+                            self.put_back_char()?;
+                            break;
+                        }
+                    } else if next_ch.value.is_ascii_alphabetic() {
+                        has_letter = true;
+                    } else {
 
-                    if !ch.is_ascii_alphanumeric() && ch != '_' {
-                        self.put_back_char()?;
-                        break;
                     }
 
-                    token.push_str(&String::from(ch));
+                    token.push_str(&String::from(next_ch.value));
+                    next_ch = self.get_next_char()?;
                 }
 
                 let matched_token = match token {
@@ -287,16 +325,16 @@ impl Lexer {
                     _ => Tokens::TIdentifier(token),
                 };
 
-                return Ok(matched_token);
+                return Ok(Token::new(matched_token, lineno, charno));
             }
-            ch if ch.is_ascii_digit() => {
+            val if val.is_ascii_digit() => {
                 self.put_back_char()?;
                 self.read_integer(&mut token)?;
 
                 let maybe_decimal = self.get_next_char()?;
 
-                if maybe_decimal == '.' {
-                    token.push_str(&String::from(maybe_decimal));
+                if maybe_decimal.value == '.' {
+                    token.push_str(&String::from(maybe_decimal.value));
                     self.read_integer(&mut token)?;
 
                     let real_const = match token.parse::<f64>() {
@@ -308,7 +346,7 @@ impl Lexer {
                         }
                     };
 
-                    return Ok(Tokens::TRealValue(real_const));
+                    return Ok(Token::new(Tokens::TRealValue(real_const), ch.line_no, ch.char_no));
                 }
 
                 self.put_back_char()?;
@@ -322,14 +360,14 @@ impl Lexer {
                     }
                 };
 
-                return Ok(Tokens::TIntegerValue(int_const));
+                return Ok(Token::new(Tokens::TIntegerValue(int_const), ch.line_no, ch.char_no));
             }
-            ch if ch.to_string() == "." => {
+            val if val.to_string() == "." => {
                 let next_ch = self.get_next_char()?;
 
-                if next_ch.is_ascii_digit() {
-                    token.push_str(&String::from(ch));
-                    token.push_str(&String::from(next_ch));
+                if next_ch.value.is_ascii_digit() {
+                    token.push_str(&String::from(val));
+                    token.push_str(&String::from(next_ch.value));
 
                     self.read_integer(&mut token)?;
 
@@ -342,11 +380,22 @@ impl Lexer {
                         }
                     };
 
-                    return Ok(Tokens::TRealValue(real_const));
+                    return Ok(Token::new(Tokens::TRealValue(real_const), ch.line_no, ch.char_no));
                 }
 
                 self.put_back_char()?;
-                return Ok(Tokens::TDot);
+                return Ok(Token::new(Tokens::TDot, ch.line_no, ch.char_no));
+            }
+            val if val.to_string() == "@" => {
+                match self.get_chars_until(b'(') {
+                    Ok(Some(mut built_in_name)) => {
+                        self.put_back_char()?;
+                        built_in_name.pop();
+                        Ok(Token::new(Tokens::TBuiltIn(format!("@{}", built_in_name)), ch.line_no, ch.char_no))
+                    }
+                    Ok(None) => return Ok(Token::new(Tokens::TBuiltIn(format!("@")), ch.line_no, ch.char_no)),
+                    Err(err) => return Err(err),
+                }
             }
             _ => {
                 return Err(ParseError {
@@ -360,13 +409,13 @@ impl Lexer {
         format!("{}:{}", self.current_line, self.current_char)
     }
 
-    pub fn peek_token(&mut self) -> Result<Tokens, ParseError> {
+    pub fn peek_token(&mut self) -> Result<Token, ParseError> {
         let token = self._next_token(true)?;
         self.token_buffer.push_front(token.clone());
         return Ok(token);
     }
 
-    pub fn put_back_token(&mut self, token: Tokens) {
+    pub fn put_back_token(&mut self, token: Token) {
         self.token_buffer.push_back(token);
     }
 
@@ -390,7 +439,7 @@ impl Lexer {
         return Ok(Some(String::from_utf8(str_buffer).unwrap()));
     }
 
-    fn get_next_char(&mut self) -> Result<char, ParseError> {
+    fn get_next_char(&mut self) -> Result<Character, ParseError> {
         let mut read_buffer: [u8; 1] = [0];
         let count = match self.buffer.read(&mut read_buffer) {
             Ok(count) => count,
@@ -400,12 +449,12 @@ impl Lexer {
                 })
             }
         };
-
+        
         if count < 1 {
-            return Ok('\0');
+            return Ok(Character { value: '\0', line_no: self.current_line, char_no: self.current_char });
         }
 
-        let ch = read_buffer[0] as char;
+        let ch = Character { value: read_buffer[0] as char, line_no: self.current_line, char_no: self.current_char };
         self.current_char += 1;
 
         return Ok(ch);
@@ -427,8 +476,8 @@ impl Lexer {
         loop {
             let ch = self.get_next_char()?;
 
-            if ch.is_ascii_digit() {
-                token.push_str(&String::from(ch));
+            if ch.value.is_ascii_digit() {
+                token.push_str(&String::from(ch.value));
             } else {
                 self.put_back_char()?;
                 break;
@@ -436,6 +485,10 @@ impl Lexer {
         }
 
         Ok(())
+    }
+
+    fn is_valid_identifier_character(ch: &char) -> bool {
+        ch.is_ascii_alphabetic() || *ch == '_'
     }
 
     pub fn is_typename(token: &Tokens) -> bool {
@@ -461,6 +514,7 @@ impl Lexer {
             token if token == "continue" => Some(Tokens::TContinue),
             token if token == "dto" => Some(Tokens::TDto),
             token if token == "else" => Some(Tokens::TElse),
+            // token if token == "exit" => Some(Tokens::TExit),
             token if token == "false" => Some(Tokens::TFalse),
             token if token == "for" => Some(Tokens::TFor),
             token if token == "fn" => Some(Tokens::TFn),

@@ -1,6 +1,8 @@
-use std::env;
+use std::{borrow::BorrowMut, env};
 
 use parser::parser::Parser;
+use runtime::{interpreter::RuntimeScope, static_analysis::{StaticAnalysis, StaticAnalysisScope}};
+// use runtime::interpreter::{Runtime, RuntimeScope};
 
 mod expressions;
 mod parser;
@@ -19,7 +21,7 @@ fn main() {
             }
         };
 
-        let module = match parser.parse_file() {
+        let mut module = match parser.parse_file() {
             Ok(module) => module,
             Err(err) => {
                 eprintln!("{}", err.message);
@@ -28,5 +30,9 @@ fn main() {
         };
 
         println!("{}", module.to_json());
+        
+        eprintln!("executing...");
+
+        module.static_analysis(StaticAnalysisScope::new().borrow_mut());
     }
 }
